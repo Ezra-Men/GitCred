@@ -1,0 +1,130 @@
+import json
+import os
+import time
+from typing import Any, Dict, List, Optional
+from google import genai
+from google.genai import types
+from google.genai.errors import APIError
+from pydantic import BaseModel, Field
+
+
+class SignalsBreakdown(BaseModel):
+  commit_cadence: str = Field(
+      description="Commit frequency observation: 'High', 'Moderate', or 'Low'"
+  )
+  architecture_depth: str = Field(
+      description="Modularity, tests, or containerization found"
+  )
+  collaboration: str = Field(
+      description="Stars, forks, or open-source contribution signals"
+  )
+
+
+class EvaluationOutput(BaseModel):
+  primary_role: str = Field(
+      description=(
+          "Primary engineering specialization, e.g. 'Backend Engineer'"
+      )
+  )
+  seniority_level: str = Field(
+      description="Must be strictly one of: 'ENTRY', 'MID', or 'SENIOR'"
+  )
+  confidence_score: int = Field(
+      description="Confidence rating between 40 and 99"
+  )
+  top_skills: List[str] = Field(
+      description="Top 4 to 6 technical languages, frameworks, or tools"
+  )
+  metrics_signals: SignalsBreakdown = Field(
+      description="Structured signals observed from repositories"
+  )
+  summary: str = Field(
+      description="Crisp 2-3 sentence hiring-manager verdict"
+  )
+
+
+class AIServiceError(Exception):
+  """Custom exception for LLM classification failures."""
+
+  pass
+
+
+class AIService:
+
+  def __init__(self, api_key: Optional[str] = None):
+    self.api_key = api_key or os.getenv('GEMINI_API_KEY')
+    if not self.api_key or self.api_key.startswith('your_gemini'):
+      raise AIServiceError('Missing or invalid GEMINI_API_KEY in environment.')
+    self.client = genai.Client(api_key=self.api_key)
+
+  def evaluate_developer(
+      self, github_payload: Dict[str, Any]
+  ) -> EvaluationOutput:
+    profile = github_payload.get('profile', {})
+    stats = github_payload.get('stats', {})
+    repos = github_payload.get('notable_repositories', [])
+
+    prompt = f"""
+You are an expert technical recruiter and senior engineering evaluator for pan-African tech talent.
+Evaluate the following GitHub profile data objectively:
+
+CANDIDATE INFO:
+- Username: {profile.get('username')}
+- Name: {profile.get('name')}
+- Bio: {profile.get('bio')}
+- Public Repos: {profile.get('public_repos_count')}
+- Followers: {profile.get('followers_count')}
+
+METRICS:
+- Primary Languages: {stats.get('primary_languages')}
+- Total Stars Earned: {stats.get('total_stars_earned')}
+- Recent Commit Activity (PushEvents): {stats.get('recent_public_commits')}
+- Original Repos Sampled: {len(repos)}
+
+TOP REPOSITORIES SAMPLE:
+{json.dumps(repos, indent=2)}
+
+EVALUATION CRITERIA:
+1. Seniority Level:
+   - 'ENTRY': Basic projects, tutorial repos, low commit cadence, single-file scripts.
+   - 'MID': Full-stack or modular backend apps, multiple frameworks, database integrations, consistent commits.
+   - 'SENIOR': High-impact projects, widespread star traction, architecture depth (CI/CD, containerization), reusable libraries, open-source maintenance.
+2. Primary Role: Pinpoint specialization (e.g. Backend Engineer, Fullstack Engineer, DevOps Engineer, Mobile Developer).
+3. Be fair, rigorous, and concise.
+"""
+
+    # Multi-tier candidate models
+    models_to_attempt = [
+        'gemini-3.6-flash',
+        'gemini-3.5-flash',
+    ]
+
+    for model_name in models_to_attempt:
+      # Retry each model up to 2 times with a brief backoff
+      for attempt in range(2):
+        try:
+          response = self.client.models.generate_content(
+              model=model_name,
+              contents=prompt,
+              config=types.GenerateContentConfig(
+                  response_mime_type='application/json',
+                  response_schema=EvaluationOutput,
+                  temperature=0.2,
+              ),
+          )
+          return EvaluationOutput.model_validate_json(response.text)
+        except APIError as e:
+          if e.code in [503, 429]:
+            time.sleep(1.5 * (attempt + 1))
+            continue
+          raise AIServiceError(f'AI evaluation failed: {e.message}')
+        except Exception:
+          time.sleep(1.0)
+          continue
+
+    raise AIServiceError(
+        'The AI evaluation engine is under peak global demand. Please retry in a'
+        ' few moments.'
+    )
+
+#
