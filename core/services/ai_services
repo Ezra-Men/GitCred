@@ -93,7 +93,8 @@ EVALUATION CRITERIA:
 3. Be fair, rigorous, and concise.
 """
 
-    # Multi-tier candidate models
+    # Multi-tier gemini  models
+
     models_to_attempt = [
         'gemini-3.6-flash',
         'gemini-3.5-flash',
