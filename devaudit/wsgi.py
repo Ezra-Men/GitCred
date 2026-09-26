@@ -11,6 +11,6 @@ import os
 
 from django.core.wsgi import get_wsgi_application
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'gitcred.settings')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'devaudit.settings')
 
 application = get_wsgi_application()
